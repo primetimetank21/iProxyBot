@@ -1,5 +1,9 @@
-import requests, threading
+import requests
+import glob
+import concurrent.futures
+from threading import Thread, Lock
 from bs4 import BeautifulSoup as BS
+import time
 
 #functions
 def get_last_page(session):
@@ -50,7 +54,7 @@ def get_IPs(response):
 
     return ip_list
 
-def _test_IPs(IP):
+def _test_IPs(IP, lock):
     try:
         # IP = { "ip":   ip, "port": port, "type": _type}
 
@@ -61,77 +65,93 @@ def _test_IPs(IP):
         types     = IP["type"].replace(" ", "").split(",")
 
         global working_IPs
-
-        for t in types:
-            if t not in working_IPs:
-                working_IPs[t] = []
-            working_IPs[t].append(f"{t}\t{IP['ip']}\t{IP['port']}")
+        with lock:
+            for t in types:
+                if t not in working_IPs:
+                    working_IPs[t] = []
+                working_IPs[t].append(f"{t}\t{IP['ip']}\t{IP['port']}")
         print(f"    {IP['ip']:>15} => {response.json()}")
-
     except:
         pass
 
 def test_IPs(master_list):
     print("Testing Proxies...")
     my_threads = []
+    lock = Lock()
     for ip in master_list:
-        ip_thread = threading.Thread(target=_test_IPs, args=(ip,))
+        ip_thread        = Thread(target=_test_IPs, args=(ip,lock))
+        ip_thread.daemon = True
         my_threads.append(ip_thread)
     return my_threads
 
+def test_old_IPs():
+    print("Testing old proxies...")
+    master_list = []
 
-with requests.Session() as session:
-    headers = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
+    #get old proxies from files and put in master_list
+    for file_name in glob.glob("*.txt"):
+        with open(file_name, "r") as f:
+            for line in f.readlines():
+                _type, ip, port = line.strip().split("\t")
+                ip_dict = {"ip": ip, "port": port, "type": _type}
+                master_list.append(ip_dict)
+    
+    threads = test_IPs(master_list)
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
-    print("Getting last page...")
-    last_page = get_last_page(session)
-    print(f"    Total Pages:\t{last_page // 64}")
-    print(f"    Total Proxies:\t{last_page}")
-    ip_master_list = []
+def save_proxies(proxies_dict):
+    print("Saving proxies...")
+    for _type in proxies_dict.keys():
+            with open(f"new_my_{_type}_proxy_servers.txt", "w") as f:
+                for ip in proxies_dict[_type]:
+                    f.write(f"{ip}\n")
+            print(f"    Done with {_type}")
 
-    #get IPs from site
-    print("Getting Proxies...")
-    for page in range(0,last_page+1,64):
-        try:
-            url             = f"https://hidemy.name/en/proxy-list/?start={page}"
-            res             = session.get(url, headers=headers)
-            ip_master_list += get_IPs(res)
-            page           += 64
+def main():
+    try:
+        with requests.Session() as session:
+            headers = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
 
-        except Exception as e:
-            print(e)
+            print("Getting last page...")
+            last_page = get_last_page(session)
+            print(f"    Total Pages:\t{last_page // 64}")
+            print(f"    Total Proxies:\t{last_page}")
+            ip_master_list = []
 
-#test IPs and add store working IPs
-working_IPs = {}
-threads = test_IPs(ip_master_list)
+            #get IPs from site
+            print("Getting new proxies...")
+            for page in range(0,last_page+1,64):
+                try:
+                    url             = f"https://hidemy.name/en/proxy-list/?start={page}"
+                    res             = session.get(url, headers=headers)
+                    ip_master_list += get_IPs(res)
+                    page           += 64
 
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
+                except Exception as e:
+                    print(e)
 
-#save successful IPs
+        #test IPs and add store working IPs
+        threads = test_IPs(ip_master_list)
+        for t in threads: t.start()
+        for t in threads: t.join()
 
-#TODO
-#add function to test if old proxies work; delete them if they don't
-print("Saving proxies...")
-for _type in working_IPs.keys():
-    compare_list = []
-    with open(f"new_my_{_type}_proxy_servers.txt", "r") as f:
-        for line in f.readlines():
-            line = line.strip().replace(" ", "\t")
-            compare_list.append(line)
+        #test old proxies
+        test_old_IPs()
 
-    print(f"    Working on {_type}...")
-    compare_list = list(set(compare_list))
+        #saving successful proxies
+        save_proxies(working_IPs)
 
-    for ip in working_IPs[_type]:
-        if ip not in compare_list:
-            compare_list.append(ip)
+        print("Program finished successfully")
+    except Exception as e:
+        print(e)
 
-    with open(f"new_my_{_type}_proxy_servers.txt", "w") as f:
-        for ip in compare_list:
-            f.write(f"{ip}\n")
-    print(f"    Done with {_type}")
 
-print("Program finished successfully")
+if __name__ == "__main__":
+    working_IPs = {}
+    start = time.time()
+    main()
+    end   = time.time()
+    print(f"(Finished in {round(end - start, 2)} seconds)")
