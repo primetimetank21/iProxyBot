@@ -1,6 +1,5 @@
 import requests
 import glob
-import concurrent.futures
 from threading import Thread, Lock
 from bs4 import BeautifulSoup as BS
 import time
@@ -61,7 +60,7 @@ def _test_IPs(IP, lock):
         check_url = "http://httpbin.org/ip"
         types     = IP["type"].replace(" ", "").split(",")
         proxy     = f"{IP['ip']}:{IP['port']}"
-        response  = requests.get(check_url, proxies={"http": proxy, "https": proxy}, timeout=10)
+        response  = requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
         types     = IP["type"].replace(" ", "").split(",")
 
         global working_IPs
@@ -70,7 +69,7 @@ def _test_IPs(IP, lock):
                 if t not in working_IPs:
                     working_IPs[t] = []
                 working_IPs[t].append(f"{t}\t{IP['ip']}\t{IP['port']}")
-        print(f"    {IP['ip']:>15} => {response.json()}")
+        print(f"    {IP['ip']:>15} => {response.json()}", flush=True)
     except:
         pass
 
@@ -80,7 +79,6 @@ def test_IPs(master_list):
     lock = Lock()
     for ip in master_list:
         ip_thread        = Thread(target=_test_IPs, args=(ip,lock))
-        ip_thread.daemon = True
         my_threads.append(ip_thread)
     return my_threads
 
