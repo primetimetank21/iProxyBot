@@ -167,7 +167,7 @@ def test_old_IPs():
 
     #get old proxies from files and put in master_list
     master_list = []
-    for file_name in glob.glob("*.txt"):
+    for file_name in glob.glob("*proxy_servers.txt"):
         with open(file_name, "r") as f:
             for line in f.readlines():
                 _type, ip, port = line.strip().split("\t")

@@ -1,1 +1,2 @@
-*.txt
+*proxy_servers.txt
+*_env/
