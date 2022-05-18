@@ -1,26 +1,63 @@
 #!/Library/Frameworks/Python.framework/Versions/3.10/bin/python3
-import requests
-import glob
 import time
+import glob
+import requests
+import os
 from random import randint
 from threading import Thread, Lock
 from bs4 import BeautifulSoup as BS
 from termcolor import colored
 
 #functions
-def progress(start_str, prog, total):
-    if prog > total: return
-    percent = 100 * float(prog/total) if prog <= total else 100
-    color   = "yellow" if prog < total else "green"
-    end     = "\r" if percent < 100 else "\n"
-    bar     = colored("=" * int(percent), color) + " " * (100 - int(percent))
-    print(f"\r{start_str:<33}|{bar}| {percent:.2f}%",end=end)
+
+def progress(start_str:str, prog:int, total:int) -> None:
+    """
+    Displays status of task
+    """
+    if prog < total:
+        percent = 100 * float(prog/total)
+        color   = "yellow"
+        end     = "\r"
+    else:
+        percent = 100
+        color   = "green"
+        # end     = "\n" #might be causing issues
+        end     = "\r" #might be causing issues
+
+    #format percent to be 7 characters every time (important for formatting)
+    percent_str = f"{float(percent):.2f}"
+    percent_str = percent_str + "%" + (" " * (7 - len(percent_str) - 1))
+
+    #start generating printable string -- includes start_str, percent_str, and the progress bar
+    printable_str  = f"\r{start_str:<38} {percent_str} "
+    printable_str += "|"
+
+    #create progress bar string
+    terminal_size  = os.get_terminal_size()
+    width          = terminal_size.columns
+    bar_limit      = width - len(printable_str) - 2  #'2' comes from the '|' chars
+    prog_bar_limit = int(bar_limit * percent * .01)
+    prog_bar       = colored("=" * prog_bar_limit, color) + (" " * (bar_limit - prog_bar_limit))
+    printable_str += prog_bar
+
+    #finish generating printable string
+    printable_str += "|"
+
+    print(printable_str,end=end,flush=True)
+
+def clear_terminal(delay=0.5) -> None:
+    """
+    Clears text from the latest terminal line
+    """
+    width = os.get_terminal_size().columns
+    time.sleep(delay)
+    print(" " * width, end="\r")
 
 def get_last_page(session):
     total_ips = 0
     headers   = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
     next_page = True
-    end = "\n"
+    end = "\r"
     with session:
         while next_page:
             try:
@@ -31,10 +68,11 @@ def get_last_page(session):
 
                 if li_next_arr:
                     total_ips += 64
-                    end = "\r"
+                    # end = "\r"
                 else:
                     next_page = False
-                    end = "\n"
+                    # end = "\n"
+                    # end = "\r"
                     break
             
             except Exception as e:
@@ -42,7 +80,7 @@ def get_last_page(session):
                 break
             finally:
                 l = len("\rGetting last page")
-                print("\rGetting last page" + " "*(34-l)+"|" + f"\tTotal Pages:\t{total_ips // 64}; Total Proxies:\t{total_ips}",end=end)
+                print("\rGetting last page" + " "*(37-l)+"|" + f"\tTotal Pages:\t{total_ips // 64}; Total Proxies:\t{total_ips}",end=end)
                 # print(f"\n    Total Proxies:\t{total_ips}",end=end)
 
     # print(f"\r    Total Pages:\t{total_ips // 64}\t|\tTotal Proxies:\t{total_ips}",end=end)
@@ -80,7 +118,7 @@ def _test_IPs(start_str,master_list, lock, num_lock):
                 global idx
                 IP = master_list[idx]
                 idx += 1
-                if idx > len(master_list): return
+                if idx >= len(master_list): return
             check_url = "http://httpbin.org/ip"
             types     = IP["type"].replace(" ", "").split(",")
             proxy     = f"{IP['ip']}:{IP['port']}"
@@ -114,7 +152,6 @@ def create_IP_threads(start_str, master_list):
     return my_threads
 
 def test_IPs(master_list):
-    # print("Testing Proxies...",flush=True)
     my_threads = create_IP_threads("Testing Proxies",master_list)
     global prog
     global idx
@@ -124,7 +161,6 @@ def test_IPs(master_list):
     for t in my_threads: t.join()
 
 def test_old_IPs():
-    # print("Testing old proxies...",flush=True)
     global prog
     global idx
     prog,idx = 0,0
@@ -144,13 +180,16 @@ def test_old_IPs():
     for t in my_threads: t.join()
 
 def save_proxies(proxies_dict):
-    print("Saving proxies",flush=True)
+    print("Saving proxies",flush=True,end="\r")
+    clear_terminal()
     for _type in proxies_dict.keys():
             with open(f"new_my_{_type}_proxy_servers.txt", "w") as f:
                 # print(f"    Saving {_type}...",end="")
                 for i,ip in enumerate(proxies_dict[_type]):
                     f.write(f"{ip}\n")
-                    progress(f"    Saving {_type}",i+1,len(proxies_dict[_type]))
+                    # progress(f"    Saving {_type}",i+1,len(proxies_dict[_type]))
+                    progress(f"Saving {_type}",i+1,len(proxies_dict[_type]))
+            clear_terminal(0.5)
             # print(f"    Done with {_type}")
 
 def main():
@@ -176,8 +215,8 @@ def main():
                 except Exception as e:
                     print(e)
                 finally:
-                    progress("Getting New Proxies",page,last_page+1)
-            progress("Getting New Proxies",100,100)
+                    progress("Getting New Proxies",page+1,last_page+1)
+            # progress("Getting New Proxies",100,100)
             # print()
 
 
@@ -192,15 +231,17 @@ def main():
         #saving successful proxies
         save_proxies(working_IPs)
 
-        print("Program finished successfully")
+        # print("Program finished successfully")
     except Exception as e:
         print(e)
 
 
 if __name__ == "__main__":
     working_IPs = {}
-    prog,idx = 0,0
-    start = time.time()
+    prog,idx    = 0,0
+    start_time  = time.time()
     main()
-    end   = time.time()
-    print(f"(Finished in {round(end - start, 2)} seconds)")
+    end_time = time.time()
+    print(f"(Finished in {round(end_time - start_time, 2)} seconds)",end="\r")
+    clear_terminal(5)
+
