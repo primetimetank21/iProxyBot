@@ -1,10 +1,11 @@
 #!/Library/Frameworks/Python.framework/Versions/3.10/bin/python3
 import time
 import glob
-import requests
 import os
+import requests
 from random import randint
 from threading import Thread, Lock
+from typing import Dict
 from bs4 import BeautifulSoup as BS
 from termcolor import colored
 
@@ -45,7 +46,7 @@ def progress(start_str:str, prog:int, total:int) -> None:
 
     print(printable_str,end=end,flush=True)
 
-def clear_terminal(delay=0.5) -> None:
+def clear_terminal(delay:float=0.5) -> None:
     """
     Clears text from the latest terminal line
     """
@@ -53,7 +54,10 @@ def clear_terminal(delay=0.5) -> None:
     time.sleep(delay)
     print(" " * width, end="\r")
 
-def get_last_page(session):
+def get_last_page(session:requests.Session) -> int:
+    """
+    Get last page index on proxy list site
+    """
     total_ips = 0
     headers   = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
     next_page = True
@@ -80,13 +84,14 @@ def get_last_page(session):
                 break
             finally:
                 l = len("\rGetting last page")
-                print("\rGetting last page" + " "*(37-l)+"|" + f"\tTotal Pages:\t{total_ips // 64}; Total Proxies:\t{total_ips}",end=end)
-                # print(f"\n    Total Proxies:\t{total_ips}",end=end)
+                print("\rGetting last page" + " "*(37-l)+"|" + f"Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
 
-    # print(f"\r    Total Pages:\t{total_ips // 64}\t|\tTotal Proxies:\t{total_ips}",end=end)
     return total_ips
 
-def get_IPs(response):
+def get_ips(response:requests.Response) -> list:
+    """
+    Gets IP addresses from the given response's HTML
+    """
     ip_list = []
     soup = BS(response.text, "html.parser")
 
@@ -110,19 +115,19 @@ def get_IPs(response):
 
     return ip_list
 
-def _test_IPs(start_str,master_list, lock, num_lock):
+def _test_ips(start_str:str, master_list:list, lock:Lock, num_lock:Lock) -> None:
     while True:
         try:
-            # IP = { "ip":   ip, "port": port, "type": _type}
+            # IP = { "ip": ip, "port": port, "type": _type}
             with num_lock:
                 global idx
                 IP = master_list[idx]
                 idx += 1
                 if idx >= len(master_list): return
             check_url = "http://httpbin.org/ip"
-            types     = IP["type"].replace(" ", "").split(",")
             proxy     = f"{IP['ip']}:{IP['port']}"
-            response  = requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
+            # response  = requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
+            requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
             types     = IP["type"].replace(" ", "").split(",")
 
             global working_IPs
@@ -139,20 +144,25 @@ def _test_IPs(start_str,master_list, lock, num_lock):
                 global prog
                 prog += 1
                 # progress(f"numIPs:{len(master_list)}",prog, len(master_list))
-                # progress(f"{start_str} (IPs:{len(master_list)})",prog,len(master_list))
                 progress(f"{start_str} (IPs:{len(master_list)})",prog,len(master_list))
 
-def create_IP_threads(start_str, master_list):
+def create_ip_threads(start_str:str, master_list:list) -> list:
+    """
+    Create threads to test all the IP addresses
+    """
     my_threads = []
     lock       = Lock()
     num_lock   = Lock()
     for _ in range(randint(100,300)):
-        ip_thread = Thread(target=_test_IPs, args=(start_str,master_list,lock,num_lock))
+        ip_thread = Thread(target=_test_ips, args=(start_str,master_list,lock,num_lock))
         my_threads.append(ip_thread)
     return my_threads
 
-def test_IPs(master_list):
-    my_threads = create_IP_threads("Testing Proxies",master_list)
+def test_ips(master_list:list) -> None:
+    """
+    Tests the IP addresses in the provided list
+    """
+    my_threads = create_ip_threads("Testing Proxies",master_list)
     global prog
     global idx
     prog,idx = 0,0
@@ -160,7 +170,10 @@ def test_IPs(master_list):
     for t in my_threads: t.start()
     for t in my_threads: t.join()
 
-def test_old_IPs():
+def test_old_ips() -> None:
+    """
+    Tests the old IP addresses already saved
+    """
     global prog
     global idx
     prog,idx = 0,0
@@ -168,80 +181,75 @@ def test_old_IPs():
     #get old proxies from files and put in master_list
     master_list = []
     for file_name in glob.glob("*proxy_servers.txt"):
-        with open(file_name, "r") as f:
+        with open(file_name, "r", encoding="utf-8") as f:
             for line in f.readlines():
                 _type, ip, port = line.strip().split("\t")
                 ip_dict = {"ip": ip, "port": port, "type": _type}
                 master_list.append(ip_dict)
     
-    my_threads = create_IP_threads("Testing Old Proxies",master_list)
+    my_threads = create_ip_threads("Testing Old Proxies",master_list)
 
     for t in my_threads: t.start()
     for t in my_threads: t.join()
 
-def save_proxies(proxies_dict):
+def save_proxies(proxies_dict:dict) -> None:
+    """
+    Saves working proxies to files
+    """
     print("Saving proxies",flush=True,end="\r")
     clear_terminal()
     for _type in proxies_dict.keys():
-            with open(f"new_my_{_type}_proxy_servers.txt", "w") as f:
-                # print(f"    Saving {_type}...",end="")
+            with open(f"new_my_{_type}_proxy_servers.txt", "w", encoding="utf-8") as f:
                 for i,ip in enumerate(proxies_dict[_type]):
                     f.write(f"{ip}\n")
-                    # progress(f"    Saving {_type}",i+1,len(proxies_dict[_type]))
                     progress(f"Saving {_type}",i+1,len(proxies_dict[_type]))
             clear_terminal(0.5)
-            # print(f"    Done with {_type}")
 
-def main():
+def main() -> None:
+    """
+    Driver code
+    """
     try:
         with requests.Session() as session:
-            headers = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
+            headers = {"User-Agent": """Mozilla/5.0 (X11;Ubuntu; Linux x86_64; rv:84.0)\
+                        Gecko/20100101 Firefox/84.0""",
+                       "Accept-Language": "en-US,en;q=0.5",
+                       "Accept": "*/*"}
 
-            # print("Getting last page")
             last_page = get_last_page(session)
-            # print(f"    Total Pages:\t{last_page // 64}")
-            # print(f"    Total Proxies:\t{last_page}")
             ip_master_list = []
 
             #get IPs from site
-            # print("Getting new proxies...",flush=True)
             for page in range(0,last_page+2,64):
                 try:
                     url             = f"https://hidemy.name/en/proxy-list/?start={page}"
                     res             = session.get(url, headers=headers)
-                    ip_master_list += get_IPs(res)
-                    # page           += 64
+                    ip_master_list += get_ips(res)
 
                 except Exception as e:
                     print(e)
                 finally:
                     progress("Getting New Proxies",page+1,last_page+1)
             # progress("Getting New Proxies",100,100)
-            # print()
-
 
         #test IPs and add store working IPs
-        test_IPs(ip_master_list)
-        # print()
+        test_ips(ip_master_list)
 
         #test old proxies
-        test_old_IPs()
-        # print()
+        test_old_ips()
 
         #saving successful proxies
         save_proxies(working_IPs)
 
-        # print("Program finished successfully")
     except Exception as e:
         print(e)
 
 
 if __name__ == "__main__":
-    working_IPs = {}
-    prog,idx    = 0,0
-    start_time  = time.time()
+    working_IPs:Dict[str,list] = {}
+    prog,idx   = 0,0
+    start_time = time.time()
     main()
     end_time = time.time()
     print(f"(Finished in {round(end_time - start_time, 2)} seconds)",end="\r")
     clear_terminal(5)
-
