@@ -54,41 +54,40 @@ def clear_terminal(delay:float=0.5) -> None:
     time.sleep(delay)
     print(" " * width, end="\r")
 
-def get_last_page(session:requests.Session) -> int:
+def get_all_ips(session:requests.Session) -> list:
     """
     Get last page index on proxy list site
     """
     total_ips = 0
     headers   = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
     next_page = True
+    l_str,l = ("\rGetting New Proxies", len("\rGetting New Proxies"))
     end = "\r"
+    ip_master_list = []
     with session:
         while next_page:
             try:
-                url         = f"https://hidemy.name/en/proxy-list/?start={total_ips}"
-                res         = session.get(url, headers=headers, timeout=10)
-                soup        = BS(res.text, "html.parser")
-                li_next_arr = soup.find("li", {"class": "next_array"})
+                url             = f"https://hidemy.name/en/proxy-list/?start={total_ips}"
+                res             = session.get(url, headers=headers, timeout=10)
+                ip_master_list += get_ips_on_page(res)
+                soup            = BS(res.text, "html.parser")
+                li_next_arr     = soup.find("li", {"class": "next_array"})
 
                 if li_next_arr:
                     total_ips += 64
-                    # end = "\r"
                 else:
                     next_page = False
-                    # end = "\n"
-                    # end = "\r"
                     break
             
             except Exception as e:
                 print(e)
                 break
             finally:
-                l = len("\rGetting last page")
-                print("\rGetting last page" + " "*(37-l)+"|" + f"Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
+                print(l_str + " "*(37-l)+"|" + f"Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
 
-    return total_ips
+    return ip_master_list
 
-def get_ips(response:requests.Response) -> list:
+def get_ips_on_page(response:requests.Response) -> list:
     """
     Gets IP addresses from the given response's HTML
     """
@@ -99,7 +98,7 @@ def get_ips(response:requests.Response) -> list:
     del ip_table[0]
     
     for row in ip_table:
-        tds     = row.find_all("td")
+        tds   = row.find_all("td")
         
         ip    = tds[0].text.strip()
         port  = tds[1].text.strip()
@@ -126,7 +125,6 @@ def _test_ips(start_str:str, master_list:list, lock:Lock, num_lock:Lock) -> None
                 if idx >= len(master_list): return
             check_url = "http://httpbin.org/ip"
             proxy     = f"{IP['ip']}:{IP['port']}"
-            # response  = requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
             requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
             types     = IP["type"].replace(" ", "").split(",")
 
@@ -136,14 +134,12 @@ def _test_ips(start_str:str, master_list:list, lock:Lock, num_lock:Lock) -> None
                     if t not in working_IPs:
                         working_IPs[t] = []
                     working_IPs[t].append(f"{t}\t{IP['ip']}\t{IP['port']}")
-            # print(f"    {IP['ip']:>15} => {response.json()}", flush=True)
         except:
             if idx >= len(master_list): return
         finally:
             with num_lock:
                 global prog
                 prog += 1
-                # progress(f"numIPs:{len(master_list)}",prog, len(master_list))
                 progress(f"{start_str} (IPs:{len(master_list)})",prog,len(master_list))
 
 def create_ip_threads(start_str:str, master_list:list) -> list:
@@ -162,7 +158,7 @@ def test_ips(master_list:list) -> None:
     """
     Tests the IP addresses in the provided list
     """
-    my_threads = create_ip_threads("Testing Proxies",master_list)
+    my_threads = create_ip_threads("Testing Proxies", master_list)
     global prog
     global idx
     prog,idx = 0,0
@@ -186,13 +182,13 @@ def test_old_ips() -> None:
                 _type, ip, port = line.strip().split("\t")
                 ip_dict = {"ip": ip, "port": port, "type": _type}
                 master_list.append(ip_dict)
-    
-    my_threads = create_ip_threads("Testing Old Proxies",master_list)
+
+    my_threads = create_ip_threads("Testing Old Proxies", master_list)
 
     for t in my_threads: t.start()
     for t in my_threads: t.join()
 
-def save_proxies(proxies_dict:dict) -> None:
+def save_ips(proxies_dict:dict) -> None:
     """
     Saves working proxies to files
     """
@@ -210,36 +206,17 @@ def main() -> None:
     Driver code
     """
     try:
-        with requests.Session() as session:
-            headers = {"User-Agent": """Mozilla/5.0 (X11;Ubuntu; Linux x86_64; rv:84.0)\
-                        Gecko/20100101 Firefox/84.0""",
-                       "Accept-Language": "en-US,en;q=0.5",
-                       "Accept": "*/*"}
+        #get new IPs and add them to a list
+        ip_master_list = get_all_ips(requests.Session())
 
-            last_page = get_last_page(session)
-            ip_master_list = []
-
-            #get IPs from site
-            for page in range(0,last_page+2,64):
-                try:
-                    url             = f"https://hidemy.name/en/proxy-list/?start={page}"
-                    res             = session.get(url, headers=headers)
-                    ip_master_list += get_ips(res)
-
-                except Exception as e:
-                    print(e)
-                finally:
-                    progress("Getting New Proxies",page+1,last_page+1)
-            # progress("Getting New Proxies",100,100)
-
-        #test IPs and add store working IPs
+        #test new IPs
         test_ips(ip_master_list)
 
-        #test old proxies
+        #test old IPs
         test_old_ips()
 
-        #saving successful proxies
-        save_proxies(working_IPs)
+        #save successful IPs
+        save_ips(working_IPs)
 
     except Exception as e:
         print(e)
