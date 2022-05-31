@@ -9,7 +9,7 @@ from typing import Dict
 from bs4 import BeautifulSoup as BS
 from termcolor import colored
 
-#make this into a class
+#TODO: make this into a class
 
 #functions
 
@@ -17,14 +17,9 @@ def progress(start_str:str, prog:int, total:int) -> None:
     """
     Displays status of task
     """
-    if prog < total:
-        percent = 100 * float(prog/total)
-        color   = "yellow"
-        end     = "\r"
-    else:
-        percent = 100
-        color   = "green"
-        end     = "\r"
+    percent = 100 * float(prog/total) if prog < total else 100
+    color   = "yellow" if prog < total else "green"
+    end     = "\r"
 
     #format percent to be 7 characters every time (important for formatting)
     percent_str = f"{float(percent):.2f}"
@@ -63,7 +58,7 @@ def get_all_ips(session:requests.Session) -> list:
     total_ips = 0
     headers   = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
     next_page = True
-    l_str,l = ("\rGetting New Proxies", len("\rGetting New Proxies"))
+    l_str= "\rGetting New Proxies"
     end = "\r"
     ip_master_list = []
     with session:
@@ -85,7 +80,7 @@ def get_all_ips(session:requests.Session) -> list:
                 print(e)
                 break
             finally:
-                print(l_str + " "*(37-l)+"|" + f"Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
+                print(f"{l_str} | Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
 
     return ip_master_list
 
@@ -118,12 +113,12 @@ def get_ips_on_page(response:requests.Response) -> list:
 
 def _test_ips(start_str:str, ip_dict:Dict, n:int, lock:Lock, num_lock:Lock) -> None:
     try:
-        # IP = { "ip": ip, "port": port, "type": _type}
+        # ip_dict = { "ip": ip, "port": port, "type": _type}
         check_url = "http://httpbin.org/ip"
         proxy     = f"{ip_dict['ip']}:{ip_dict['port']}"
-        requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=7)
-        types     = ip_dict["type"].replace(" ", "").split(",")
-        # print(r.json())
+        proxies   = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
+        requests.get(check_url, proxies=proxies, timeout=7)
+        types = ip_dict["type"].replace(" ", "").split(",")
         with lock:
             global working_IPs
             for t in types:
@@ -131,8 +126,8 @@ def _test_ips(start_str:str, ip_dict:Dict, n:int, lock:Lock, num_lock:Lock) -> N
                     working_IPs[t] = []
                 working_IPs[t].append(f"{t}\t{ip_dict['ip']}\t{ip_dict['port']}")
     except Exception as e:
-        # print(e,end="\r")
         # write exception in a log file in future?
+        # print(e,end="\r")
         pass
     finally:
         with num_lock:
@@ -177,17 +172,17 @@ def test_old_ips() -> None:
     with concurrent.futures.ThreadPoolExecutor() as executor:
         executor.map(lambda f: _test_ips(*f), params, timeout=10)
 
-def save_ips(proxies_dict:dict) -> None:
+def save_ips(ip_dict:dict) -> None:
     """
     Saves working proxies to files
     """
     print("Saving proxies",flush=True,end="\r")
     clear_terminal()
-    for _type in proxies_dict.keys():
+    for _type in ip_dict.keys():
             with open(f"new_my_{_type}_proxy_servers.txt", "w", encoding="utf-8") as f:
-                for i,ip in enumerate(proxies_dict[_type]):
+                for i,ip in enumerate(ip_dict[_type]):
                     f.write(f"{ip}\n")
-                    progress(f"Saving {_type}",i+1,len(proxies_dict[_type]))
+                    progress(f"Saving {_type}",i+1,len(ip_dict[_type]))
             clear_terminal(0.5)
 
 def main() -> None:
