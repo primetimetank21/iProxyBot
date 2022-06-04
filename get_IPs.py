@@ -3,11 +3,13 @@ import time
 import glob
 import os
 import requests
-from random import randint
-from threading import Thread, Lock
+import concurrent.futures
+from threading import Lock
 from typing import Dict
 from bs4 import BeautifulSoup as BS
 from termcolor import colored
+
+#TODO: make this into a class
 
 #functions
 
@@ -15,21 +17,16 @@ def progress(start_str:str, prog:int, total:int) -> None:
     """
     Displays status of task
     """
-    if prog < total:
-        percent = 100 * float(prog/total)
-        color   = "yellow"
-        end     = "\r"
-    else:
-        percent = 100
-        color   = "green"
-        # end     = "\n" #might be causing issues
-        end     = "\r" #might be causing issues
+    percent = 100 * float(prog/total) if prog < total else 100
+    color   = "yellow" if prog < total else "green"
+    end     = "\r"
 
     #format percent to be 7 characters every time (important for formatting)
     percent_str = f"{float(percent):.2f}"
     percent_str = percent_str + "%" + (" " * (7 - len(percent_str) - 1))
 
     #start generating printable string -- includes start_str, percent_str, and the progress bar
+    start_str += f" {prog}/{total}"
     printable_str  = f"\r{start_str:<38} {percent_str} "
     printable_str += "|"
 
@@ -61,7 +58,7 @@ def get_all_ips(session:requests.Session) -> list:
     total_ips = 0
     headers   = {"User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:84.0) Gecko/20100101 Firefox/84.0","Accept-Language": "en-US,en;q=0.5","Accept": "*/*"}
     next_page = True
-    l_str,l = ("\rGetting New Proxies", len("\rGetting New Proxies"))
+    l_str= "\rGetting New Proxies"
     end = "\r"
     ip_master_list = []
     with session:
@@ -83,7 +80,7 @@ def get_all_ips(session:requests.Session) -> list:
                 print(e)
                 break
             finally:
-                print(l_str + " "*(37-l)+"|" + f"Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
+                print(f"{l_str} | Total Pages: {total_ips // 64}; Total Proxies: {total_ips}",end=end)
 
     return ip_master_list
 
@@ -114,66 +111,48 @@ def get_ips_on_page(response:requests.Response) -> list:
 
     return ip_list
 
-def _test_ips(start_str:str, master_list:list, lock:Lock, num_lock:Lock) -> None:
-    while True:
-        try:
-            # IP = { "ip": ip, "port": port, "type": _type}
-            with num_lock:
-                global idx
-                IP = master_list[idx]
-                idx += 1
-                if idx >= len(master_list): return
-            check_url = "http://httpbin.org/ip"
-            proxy     = f"{IP['ip']}:{IP['port']}"
-            requests.get(check_url, proxies={"http": f"http://{proxy}", "https": f"http://{proxy}"}, timeout=15)
-            types     = IP["type"].replace(" ", "").split(",")
-
+def _test_ips(start_str:str, ip_dict:Dict, n:int, lock:Lock, num_lock:Lock) -> None:
+    try:
+        # ip_dict = { "ip": ip, "port": port, "type": _type}
+        check_url = "http://httpbin.org/ip"
+        proxy     = f"{ip_dict['ip']}:{ip_dict['port']}"
+        proxies   = {"http": f"http://{proxy}", "https": f"http://{proxy}"}
+        requests.get(check_url, proxies=proxies, timeout=7)
+        types = ip_dict["type"].replace(" ", "").split(",")
+        with lock:
             global working_IPs
-            with lock:
-                for t in types:
-                    if t not in working_IPs:
-                        working_IPs[t] = []
-                    working_IPs[t].append(f"{t}\t{IP['ip']}\t{IP['port']}")
-        except:
-            if idx >= len(master_list): return
-        finally:
-            with num_lock:
-                global prog
-                prog += 1
-                progress(f"{start_str} (IPs:{len(master_list)})",prog,len(master_list))
-
-def create_ip_threads(start_str:str, master_list:list) -> list:
-    """
-    Create threads to test all the IP addresses
-    """
-    my_threads = []
-    lock       = Lock()
-    num_lock   = Lock()
-    for _ in range(randint(100,300)):
-        ip_thread = Thread(target=_test_ips, args=(start_str,master_list,lock,num_lock))
-        my_threads.append(ip_thread)
-    return my_threads
+            for t in types:
+                if t not in working_IPs:
+                    working_IPs[t] = []
+                working_IPs[t].append(f"{t}\t{ip_dict['ip']}\t{ip_dict['port']}")
+    except Exception as e:
+        # write exception in a log file in future?
+        # print(e,end="\r")
+        pass
+    finally:
+        with num_lock:
+            global prog
+            prog += 1
+            progress(f"{start_str} (IPs:{n})", prog, n)
 
 def test_ips(master_list:list) -> None:
     """
     Tests the IP addresses in the provided list
     """
-    my_threads = create_ip_threads("Testing Proxies", master_list)
     global prog
     global idx
     prog,idx = 0,0
-
-    for t in my_threads: t.start()
-    for t in my_threads: t.join()
+    lock     = Lock()
+    num_lock = Lock()
+    params   = [("Testing Proxies", ip_dict, len(master_list), lock, num_lock) for ip_dict in master_list]
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(lambda f: _test_ips(*f), params, timeout=10)
 
 def test_old_ips() -> None:
     """
     Tests the old IP addresses already saved
     """
-    global prog
-    global idx
-    prog,idx = 0,0
-
     #get old proxies from files and put in master_list
     master_list = []
     for file_name in glob.glob("*proxy_servers.txt"):
@@ -183,22 +162,27 @@ def test_old_ips() -> None:
                 ip_dict = {"ip": ip, "port": port, "type": _type}
                 master_list.append(ip_dict)
 
-    my_threads = create_ip_threads("Testing Old Proxies", master_list)
+    global prog
+    global idx
+    prog,idx = 0,0
+    lock     = Lock()
+    num_lock = Lock()
+    params   = [("Testing Old Proxies", ip_dict, len(master_list), lock, num_lock) for ip_dict in master_list]
 
-    for t in my_threads: t.start()
-    for t in my_threads: t.join()
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(lambda f: _test_ips(*f), params, timeout=10)
 
-def save_ips(proxies_dict:dict) -> None:
+def save_ips(ip_dict:dict) -> None:
     """
     Saves working proxies to files
     """
     print("Saving proxies",flush=True,end="\r")
     clear_terminal()
-    for _type in proxies_dict.keys():
+    for _type in ip_dict.keys():
             with open(f"new_my_{_type}_proxy_servers.txt", "w", encoding="utf-8") as f:
-                for i,ip in enumerate(proxies_dict[_type]):
+                for i,ip in enumerate(ip_dict[_type]):
                     f.write(f"{ip}\n")
-                    progress(f"Saving {_type}",i+1,len(proxies_dict[_type]))
+                    progress(f"Saving {_type}",i+1,len(ip_dict[_type]))
             clear_terminal(0.5)
 
 def main() -> None:
